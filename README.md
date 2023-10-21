@@ -18,7 +18,7 @@ You will also need one or two collections of KSM/USC charts to merge. Currently,
 * The second collection must have songs organized by SOUND VOLTEX game name; specifically, there should only be folders titled `SDVX BOOTH`, `SDVX Infinite Infection`, `SDVX Gravity Wars`, `SDVX Heavenly Haven`, `SDVX Vivid Wave`, and `SDVX Exceed Gear`. A good example of such a collection is the [SDVX 1-5 Pack on oniichan.wtf](https://oniichan.wtf/help/songs.html).
     * If an empty second collection is supplied to the program, it will instead organize the first collection. See [Usage](#usage) for info.
 * Both collections **should only contain converts from SOUND VOLTEX**. While the program will still run if a chart is not from the game, you will be prompted to supply a name and/or game of origin for said chart. This will also happen if any title query to the wiki is unsuccessful at retrieving a title romanization and/or game of origin.
-* Both collections must also have **consistent title metadata** in each chart file. If a song folder contains two chart files with differing titles, the program will fail; see [Title Conflicts](#title-conflicts) for info.
+* Both collections should also have **consistent title metadata** in each chart file. If a song folder contains two chart files with differing titles, you will be prompted to correct them. See [Options](#options) for more info.
 
 ## Usage
 ```console

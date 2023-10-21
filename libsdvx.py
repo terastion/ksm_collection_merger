@@ -66,6 +66,8 @@ class SDVXChart:
                                 break
                     cur_line = chart.readline().strip()
 
+            
+
 class SDVXSong:
     def __init__(self, chart_dir, include_sfx=True, verbose=False):
         # make sure chart dir exists
@@ -79,18 +81,51 @@ class SDVXSong:
 
         # get all .ksh files in directory and init SDVXChart objs with them
         chart_files = [chart for chart in os.listdir(chart_dir) if chart[-4:] == '.ksh']
+        conflicts = set()
         for chart_file in chart_files:
             debug(verbose, f'Current chart file is {os.path.join(chart_dir, chart_file)}')
             chart = SDVXChart(os.path.join(chart_dir, chart_file), include_sfx)
             
             # set chart title, or check if it matches existing name
             if self.title:
-                assert(chart.title == self.title)
+                #assert(chart.title == self.title)
+                if self.title != chart.title:
+                    conflicts.add(chart.title)
+                    conflicts.add(self.title)
             else: self.title = chart.title
-            #print(self.title)
 
             # assign chart to appropriate obj field
             self.charts[chart.difficulty] = chart
+
+        if conflicts:
+            conflict_list = list(conflicts)
+            while True:
+                try:
+                    number = int(input(f'Title conflict detected:\n{'\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])}\nPlease type a number: '))
+                    for chart in self.charts.values():
+                        self.update_chart_title(chart, conflict_list[number])
+                    break
+                except:
+                    print('Invalid entry!')
+
+    # Update chart's title
+    def update_chart_title(self, chart, new_title):
+        chart.title = new_title
+        full_path = ""
+        if chart.custom_path:
+            full_path = chart.filename
+        else:
+            full_path = os.path.join(self.dirname, chart.filename)
+        with open(full_path, 'r+', encoding='utf-8-sig', errors='ignore') as file:
+            # read all lines and find line containing title=, then update title
+            lines = file.readlines()
+            for i, line in enumerate(lines):
+                if line[:6] == 'title=':
+                    lines[i] = f'title={new_title}\n'
+                    break
+
+            file.seek(0)
+            file.writelines(lines)
 
     # Get all files used by all difficulties of song
     def get_files(self):

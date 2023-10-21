@@ -34,37 +34,11 @@ $ python merger.py -l LEFT -r RIGHT -o OUTPUT
 
 The program will merge the collections located at `LEFT` and `RIGHT` and output the newly organized collection to `OUTPUT`. Note that if `RIGHT` is an empty directory, the program will simply output an organized version of `LEFT`.
 
+If the program detects that two or more charts in a song folder contain different titles, it will prompt you to specify which one is the correct one, and will also modify each chart file accordingly.
+
 If the program failed to find a romanization and/or game of origin for a particular song, it will prompt you to supply that information.
 
 The final output collection will have songs organized by their game of origin, while each individual song folder will be named according to its romanization on RemyWiki.
-
-### Title Conflicts
-
-If a song folder contains two chart files that have differing `title` metadata, the program will fail due to a failed check to make sure all charts have the same title. This program currently cannot resolve such conflicts automatically. However, if you run the program with the `--verbose` flag, it will output the name and location of each chart file that it is processing, including that which caused the program failure. Knowing that file, you can edit it and correct its title metadata to match that of the other charts within its song folder.
-
-Here is an example output from the program, assuming it was run from the directory `/data/sdvx`:
-```console
-[INFO] Initializing left collection
-[DEBUG] Initiating SDVXSong left/random in init_folder!
-[DEBUG] Current chart file is left/random/MXM.ksh
-[DEBUG] Current chart file is left/random/EXH.ksh
-Traceback (most recent call last):
-  File "/data/sdvx/merger.py", line 290, in <module>
-    main(args)
-  File "/data/sdvx/merger.py", line 165, in main
-    left = libsdvx.SDVXCollection(args.left, verbose=args.verbose)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/data/sdvx/libsdvx.py", line 149, in __init__
-    self.init_folder(collection_dir, include_sfx, verbose)
-  File "/data/sdvx/libsdvx.py", line 166, in init_folder
-    song = SDVXSong(fullpath, include_sfx, verbose)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/data/sdvx/libsdvx.py", line 87, in __init__
-    assert(chart.title == self.title)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError
-```
-Since the files `left/random/EXH.ksh` and `left/random/MXM.ksh` appear right before the `AssertionError`, this means that they are the source of the error.
 
 ## License
 This project is licensed under the terms of the GNU GPL-3.0 license. See the `LICENSE` file for more information.

@@ -101,16 +101,22 @@ class SDVXSong:
             conflict_list = list(conflicts)
             while True:
                 try:
-                    number = int(input(f'Title conflict detected:\n{'\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])}\nPlease type a number: '))
+                    print(f'[WARNING] Title conflict detected: \n{
+                        '\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])
+                    }')
+                    number = int(input('Please type a number to specify correct title: '))
                     for chart in self.charts.values():
                         self.update_chart_title(chart, conflict_list[number])
                     break
                 except:
-                    print('Invalid entry!')
+                    log('warn', 'Invalid entry!')
 
     # Update chart's title
     def update_chart_title(self, chart, new_title):
         chart.title = new_title
+
+        # assemble full chart path using either song dir + filename
+        # or the complete filename in case of charts w/custom paths
         full_path = ""
         if chart.custom_path:
             full_path = chart.filename

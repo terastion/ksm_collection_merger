@@ -3,7 +3,7 @@ A program made to organize one collection or merge two collections of [SOUND VOL
 
 ## Requirements
 ### Dependencies
-* [Python 3+](https://python.org)
+* [Python 3.12+](https://python.org)
 * [Requests](https://requests.readthedocs.io/en/latest/)
 * [html\_to\_json](https://pypi.org/project/html-to-json/)
 

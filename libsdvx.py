@@ -1,7 +1,7 @@
 import os
-from tinylog import log, debug
+import logging as log
+from pathlib import Path
 from shutil import copy
-#from collections import defaultdict
 
 class SDVXChart:
     difficulties = {\
@@ -12,8 +12,8 @@ class SDVXChart:
     }
     def __init__(self, chart_file, include_sfx=True):
         # make sure chart file exists
-        assert(os.path.exists(chart_file))
-        self.filename = os.path.basename(chart_file)
+        assert(chart_file.exists())
+        self.filename = Path(chart_file.name)
         
         # this gets set to True elsewhere if chart is at different directory than rest of song
         self.custom_path = False
@@ -22,12 +22,12 @@ class SDVXChart:
         self.title = None
         self.difficulty = None
         self.level = None
-        self.music = None
+        self.music = []
         self.jacket = None
         self.sounds = None
 
         # read start of ksh file and record desired fields in obj
-        with open(chart_file, 'r', encoding='utf-8-sig', errors='ignore') as chart:
+        with chart_file.open('r', encoding='utf-8-sig', errors='ignore') as chart:
             cur_line = chart.readline().strip()
             while cur_line != "" and cur_line != '--':
                 if '=' not in cur_line:
@@ -37,8 +37,6 @@ class SDVXChart:
                 (field, value) = cur_line.split('=', 1)
                 if field == 'title':
                     self.title = value
-                #elif field == 'artist':
-                #    self.artist = value
                 elif field == 'difficulty':
                     self.difficulty = self.difficulties[value]
                 elif field == 'level':
@@ -69,26 +67,24 @@ class SDVXChart:
             
 
 class SDVXSong:
-    def __init__(self, chart_dir, include_sfx=True, verbose=False):
+    def __init__(self, chart_dir, include_sfx=True):
         # make sure chart dir exists
-        assert(os.path.isdir(chart_dir))
+        assert(chart_dir.exists())
         self.dirname = chart_dir
         self.title = None
 
         # init chart difficulties to None
-        #self.charts = defaultdict(lambda: None)
         self.charts = {}
 
         # get all .ksh files in directory and init SDVXChart objs with them
-        chart_files = [chart for chart in os.listdir(chart_dir) if chart[-4:] == '.ksh']
+        chart_files = [chart for chart in chart_dir.iterdir() if chart.name[-4:] == '.ksh']
         conflicts = set()
         for chart_file in chart_files:
-            debug(verbose, f'Current chart file is {os.path.join(chart_dir, chart_file)}')
-            chart = SDVXChart(os.path.join(chart_dir, chart_file), include_sfx)
+            log.debug(f'Current chart file is {chart_file}')
+            chart = SDVXChart(chart_file, include_sfx)
             
             # set chart title, or check if it matches existing name
             if self.title:
-                #assert(chart.title == self.title)
                 if self.title != chart.title:
                     conflicts.add(chart.title)
                     conflicts.add(self.title)
@@ -101,7 +97,7 @@ class SDVXSong:
             conflict_list = list(conflicts)
             while True:
                 try:
-                    print(f'[WARNING] Title conflict detected: \n{
+                    log.warn(f'Title conflict detected at song directory {chart_dir}: \n{\
                         '\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])
                     }')
                     number = int(input('Please type a number to specify correct title: '))
@@ -109,7 +105,7 @@ class SDVXSong:
                         self.update_chart_title(chart, conflict_list[number])
                     break
                 except:
-                    log('warn', 'Invalid entry!')
+                    log.warn('Invalid entry!')
 
     # Update chart's title
     def update_chart_title(self, chart, new_title):
@@ -117,12 +113,13 @@ class SDVXSong:
 
         # assemble full chart path using either song dir + filename
         # or the complete filename in case of charts w/custom paths
-        full_path = ""
+        full_path = None
         if chart.custom_path:
             full_path = chart.filename
         else:
-            full_path = os.path.join(self.dirname, chart.filename)
-        with open(full_path, 'r+', encoding='utf-8-sig', errors='ignore') as file:
+            full_path = self.dirname / chart.filename
+
+        with full_path.open('r+', encoding='utf-8-sig', errors='ignore') as file:
             # read all lines and find line containing title=, then update title
             lines = file.readlines()
             for i, line in enumerate(lines):
@@ -136,11 +133,14 @@ class SDVXSong:
     # Get all files used by all difficulties of song
     def get_files(self):
         result = set()
-        for h in self.charts.values():
-            result.add(h.filename)
-            result.add(h.jacket)
-            result.update(h.music)
-            result.update(h.sounds)
+        for chart in self.charts.values():
+            result.add(str(chart.filename))
+            if chart.jacket:
+                result.add(chart.jacket)
+            if chart.music:
+                result.update(chart.music)
+            if chart.sounds:
+                result.update(chart.sounds)
 
         return result
 
@@ -149,7 +149,7 @@ class SDVXSong:
         result = set()
         assert(diff in self.charts)
         chart = self.charts[diff]
-        result.add(chart.filename)
+        result.add(str(chart.filename))
         if chart.jacket:
             result.add(chart.jacket)
         if chart.music:
@@ -163,67 +163,66 @@ class SDVXSong:
     def copy_song(self, dest_dir):
         for diff in self.charts.keys():
             # Check if difficulty is hosted at a different directory
-            #debug(verbose, f'Current difficulty is {diff}')
+            #log.debug(f'Current difficulty is {diff}')
             chart_directory = self.dirname
             if self.charts[diff].custom_path:
-                chart_directory = os.path.dirname(self.charts[diff].filename)
+                chart_directory = self.charts[diff].filename.parent
 
             # copy files over
             for file in self.get_difficulty_files(diff):
-                file_name = os.path.basename(file)
-                full_file_path = os.path.join(chart_directory, file_name)
-                dest_file_path = os.path.join(dest_dir, file_name)
-                if not os.path.exists(dest_file_path):
+                file_name = Path(file).name
+                full_file_path = chart_directory / file_name
+                dest_file_path = dest_dir / file_name
+                if not dest_file_path.exists():
                     copy(full_file_path, dest_dir)
 
 
 class SDVXCollection:
-    def __init__(self, collection_dir, include_sfx=True, verbose=False):
+    def __init__(self, collection_dir, include_sfx=True):
         # make sure collection dir exists
-        assert(os.path.isdir(collection_dir))
+        collection_dir_path = Path(collection_dir)
+        assert(collection_dir_path.exists())
 
         # init song dict and other fields
-        #self.collection = defaultdict(lambda: None)
         self.collection = {}
-        self.path = os.path.realpath(collection_dir)
+        self.path = collection_dir_path.resolve()
 
         # iterate through all directories in collection dir and init
-        self.init_folder(collection_dir, include_sfx, verbose)
+        self.init_folder(collection_dir_path, include_sfx)
 
     # Check for the presence of .ksh files in directory
     def is_song_directory(self, song_dir):
-        return [file for file in os.listdir(song_dir) if file[-3:] == 'ksh'] != []
+        return [file for file in song_dir.iterdir() if file.name[-4:] == '.ksh'] != []
     
     # Initialize a collection folder, iterating through its contents and creating
     # SDVXSongs out of each song folder contained inside
-    # Also recursive!
-    def init_folder(self, collection_dir, include_sfx, verbose):
+    # Recursive function to handle subfolders
+    def init_folder(self, collection_dir, include_sfx):
         # iterate through folder contents
-        for songdir in os.listdir(collection_dir):
-            fullpath = os.path.join(collection_dir, songdir)
-            if os.path.isdir(fullpath):
+        for songdir in collection_dir.iterdir():
+            if songdir.is_dir():
                 # if folder contains ksh charts, init SDVXSong obj
-                if self.is_song_directory(fullpath):
-                    debug(verbose, f'Initiating SDVXSong {fullpath} in init_folder!')
-                    song = SDVXSong(fullpath, include_sfx, verbose)
+                if self.is_song_directory(songdir):
+                    log.debug(f'Initiating SDVXSong at {songdir}')
+                    song = SDVXSong(songdir, include_sfx)
 
                     # if song title does not exist in collection, add it
                     # otherwise, attempt to merge SDVXSongs into one
                     if song.title not in self.collection:
-                        debug(verbose, f'Adding {song.title} to collection!')
+                        log.debug(f'Adding {song.title} located at {songdir} to collection!')
                         self.collection[song.title] = song
                     else:
-                        log('warn', f'Song {song.title} at {fullpath} already exists at {self.collection[song.title].dirname}.')
+                        log.warn(f'Song {song.title} at {songdir} already exists at {self.collection[song.title].dirname}.')
                         canon = self.merge_songs(self.collection[song.title], song)
                         if canon:
                             #pass
-                            log('info', f'Successfully merged under {canon.dirname}!')
+                            log.info(f'Successfully merged under {canon.dirname}!')
                         else:
                             #pass
-                            log('warning', 'Failed to merge!')
+                            log.warn('Failed to merge!')
                 # otherwise, recursive call init_folder on subfolder
                 else:
-                    self.init_folder(fullpath, include_sfx, verbose)
+                    self.init_folder(songdir, include_sfx)
 
     # Merge song folders that contain INF/GRV/VVD/XCD with their regular counterparts
     # Returns the main song path to be used
@@ -240,13 +239,14 @@ class SDVXCollection:
             main_song = song1
             mxm_song = song2
         else:
-            log('warn', f'Neither difficulty of {song1.title} contains a MXM!')
+            log.warn(f'Neither difficulty of {song1.title} contains a MXM!')
             return
 
         # Generate full (relative path) of mxm_song and edit mxm chart to use it
         # Then set main_song's MXM to mxm_song's MXM
         if not mxm_song.charts['MXM'].custom_path:
-            mxm_path = os.path.join(mxm_song.dirname, os.path.basename(mxm_song.charts['MXM'].filename))
+            #mxm_path = os.path.join(mxm_song.dirname, os.path.basename(mxm_song.charts['MXM'].filename))
+            mxm_path = mxm_song.dirname / mxm_song.charts['MXM'].filename.name
             mxm_song.charts['MXM'].filename = mxm_path
             mxm_song.charts['MXM'].custom_path = True
         main_song.charts['MXM'] = mxm_song.charts['MXM']

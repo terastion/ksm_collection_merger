@@ -2,10 +2,12 @@ import os
 import requests
 import libsdvx
 import html_to_json
-from tinylog import log, debug
+import logging as log
 from argparse import ArgumentParser
+from itertools import batched
+from pathlib import Path
 
-def ntfs_strip(string):
+def ntfs_strip(string): 
     result = string
     for ch in "\"|%:/,\\[]<>*?":
         if ch in result:
@@ -17,31 +19,40 @@ def ntfs_strip(string):
 
 def get_batch_romanizations(songtitles):
     result = {}
-    unresolved = []
     normalized = {}
 
-    # Query the RemyWiki API
-    # Includes manual overrides for problematic titles
-    # TODO: find better replacement method
-    fixes = list(map(lambda x: x.replace('I', 'I (Chroma)') if x == 'I' else x, songtitles))
-    fixes2 = list(map(lambda x: x.replace('#', ' ') if x == 'XXanadu#climaXX' else x, fixes))
-    fixes3 = list(map(lambda x: x.replace('#', '') if x == '#EmoCloche' else x, fixes2))
-    fixes4 = list(map(lambda x: x.replace('うぇるかむ -||祭みっくす||-', 'うぇるかむ'), fixes3))
+    # Perform manual overrides for problematic titles
+    for i, title in enumerate(songtitles):
+        match title:
+            case 'XXanadu#climaXX':
+                songtitles[i] = 'XXanadu climaXX'
+            case '#EmoCloche':
+                songtitles[i] = 'EmoCloche'
+            case 'うぇるかむ -||祭みっくす||-':
+                songtitles[i] = 'VVelcome -matsuri mix-'
+            case 'I':
+                songtitles[i] = 'I (Chroma)'
+            case 'gigadelic(m3rkAb4# R3m!x)':
+                songtitles[i] = 'Gigadelic(m3rkAb4h R3m!x)'
+
     normalized['I (Chroma)'] = 'I'
     normalized['XXanadu climaXX'] = 'XXanadu#climaXX'
     normalized['EmoCloche'] = '#EmoCloche'
-    normalized['うぇるかむ'] = 'うぇるかむ -||祭みっくす||-'
-    queryString = '|'.join(fixes4)
+    normalized['VVelcome -matsuri mix-'] = 'うぇるかむ -||祭みっくす||-'
+    normalized['Gigadelic(m3rkAb4h R3m!x)'] = 'gigadelic(m3rkAb4# R3m!x)'
+
+    # Query the RemyWiki API
+    queryString = '|'.join(songtitles)
     params = {\
-        'action': 'query',\
-        'titles': queryString,\
-        'redirects': 1,\
-        'format': 'json'\
+        'action': 'query',
+        'titles': queryString,
+        'redirects': 1,
+        'format': 'json'
     }
     remyreq = requests.get('https://remywiki.com/api.php', params=params)
     req_json = remyreq.json()
 
-    # Update song lists in unresolved for any titles that may have changed in query, if any
+    # Keep track of titles that have been normalized (i.e. changed) in the query process
     if 'normalized' in req_json['query']:
         for song in req_json['query']['normalized']:
             normalized[song['to']] = song['from']
@@ -76,14 +87,12 @@ def get_batch_romanizations(songtitles):
             if 'missing' in song:
                 # check if the missing song had a normalized title
                 if song['title'] in normalized:
-                    unresolved.append(normalized[song['title']])
                     result[normalized[song['title']]] = None
                 # otherwise, check if the missing song is not
                 # already listed in the result dict.
                 # Handles the case of a song query having a redirect to
                 # a non-existent page.
                 elif song['title'] not in result.values():
-                    unresolved.append(song['title'])
                     result[song['title']] = None
             # check if song was normalized in search
             # this means that the song's wiki page title is the same
@@ -156,14 +165,23 @@ def get_song_game(song):
     return (game, title)
 
 def main(args):
-    assert(os.path.exists(args.left) and os.path.exists(args.right))
-    if not os.path.exists(args.output):
-        os.mkdir(args.output)
+    # ensure all folder paths given exist and are folders
+    left_path = Path(args.left)
+    right_path = Path(args.right)
+    assert(left_path.exists() and left_path.is_dir() and right_path.exists() and right_path.is_dir())
+    output_path = Path(args.output)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    log('info', 'Initializing left collection')
-    left = libsdvx.SDVXCollection(args.left, verbose=args.verbose)
-    log('info', 'Initializing right collection')
-    right = libsdvx.SDVXCollection(args.right, verbose=args.verbose)
+    if args.verbose:
+        log.basicConfig(format='[%(levelname)s] %(message)s', level=log.DEBUG)
+    else:
+        log.basicConfig(format='[%(levelname)s] %(message)s', level=log.INFO)
+
+    # create SDVXCollection from both input folders
+    log.info('Initializing left collection')
+    left = libsdvx.SDVXCollection(args.left)
+    log.info('Initializing right collection')
+    right = libsdvx.SDVXCollection(args.right)
 
     left_unmatched = []
     right_unmatched = list(right.collection.keys())
@@ -177,60 +195,54 @@ def main(args):
     left_unmatched.sort()
     right_unmatched.sort()
 
-    right_unmatched.append(None)
-    #print('[INFO] The following songs have no matches in the left library:')
-    #print(left_unmatched)
-    #print('[INFO] The following songs have no matches in the right library:')
-    #print(right_unmatched)
-
-    log('info', 'Beginning merge process!')
-    log('info', 'Merging songs existing in both collections')
+    log.info('Beginning song collection merge process!')
+    log.info('Merging songs existing in right collection!')
     left_songs = list(left.collection.keys())
     right_songs = list(right.collection.keys())
     
-    # Append None to song lists
-    # This allows the inner if statement to pass
-    # allowing for a song title query with less than 50 songs
-    left_songs.append(None)
-    right_songs.append(None)
-    queue = []
-    for song in left_songs:
-        if song in right_songs:
-            if song:
-                queue.append(song)
-            if len(queue) == 50 or not song:
-                if len(queue) == 0:
-                    continue
-                result = get_batch_romanizations(queue)
-                for (original_song, romanization) in result.items():
-                    debug(args.verbose, f'Current song is {original_song} with romanization {romanization}')
-                    # check if no romanization was found
-                    if not romanization:
-                        romanization = input(f'Romanizaton for {original_song} was not found, please specify one: ')
+    # obtain romanizations of songs in batches of 50
+    # and create corresponding folders in new output
+    #left_right_songs = [song for song in left_songs if song in right_songs]
+    for batch in batched(right_songs, 50):
+        result = get_batch_romanizations(batch)
+        for (original_song, romanization) in result.items():
+            log.debug(f'Current song is {original_song} with romanization {romanization}')
+            # check if no romanization was found
+            if not romanization:
+                romanization = input(f'Romanizaton for {original_song} was not found, please specify one: ')
 
-                    # formulate new folder(s) in destination dir and copy files over
-                    # get base game directory from right
-                    cur_song = right.collection[original_song]
-                    game_dir = os.path.dirname(cur_song.dirname)
+            # formulate new folder(s) in destination dir and copy files over
+            # get base game directory from right
+            cur_song = right.collection[original_song]
+            game_dir = cur_song.dirname.parent
 
-                    # substitute right dir with destination dir and append romanization
-                    dest_game_dir = game_dir.replace(args.right, args.output)
-                    dest_dir = os.path.join(dest_game_dir, ntfs_strip(romanization))
+            # substitute right dir with destination dir and append romanization
+            dest_dir = output_path / game_dir.relative_to(right_path) / ntfs_strip(romanization)
 
-                    # combine songs in case right collection contains a VVD/XCD
-                    log('log', f'Attempting to combine both sets of {original_song}')
-                    left.merge_songs(left.collection[original_song], right.collection[original_song])
+            # create dest dir before copying
+            dest_dir.mkdir(parents=True, exist_ok=True)
 
-                    # finally, create dest dir and copy
-                    os.makedirs(dest_dir, exist_ok=True)
-                    left.collection[original_song].copy_song(dest_dir)
-                    log('log', f'Transferred song file contents to {dest_dir}')
-                queue = []
+            # if song is in left collection, merge right equivalent with it
+            # then copy the song from left collection to dest
+            if original_song in left.collection:
+                # combine songs in case right collection contains INF/GRV/HVN/VVD/XCD
+                log.info(f'Attempting to combine both sets of {original_song}')
+                left.merge_songs(left.collection[original_song], right.collection[original_song])
 
-    log('info', 'Merging songs from left collection!')
+                # finally, copy song from left collection to dest dir
+                left.collection[original_song].copy_song(dest_dir)
+            else:
+                # otherwise, just copy song from right collection to dest dir
+                right.collection[original_song].copy_song(dest_dir)
+
+            log.info(f'Transferred song file contents to {dest_dir}')
+
+    # merge songs found only in the left collection
+    # these songs require querying the wiki for both romanization and game of origin
+    log.info('Merging songs from left collection!')
     for song in left_unmatched:
         # get song game and romanized title (if any)
-        debug(args.verbose, f'Attempting to obtain metadata for {song}')
+        log.debug(f'Attempting to obtain metadata for {song}')
         (game, title) = get_song_game(song)
         if not game:
             game = input(f'Could not get game from RemyWiki. Please specify the game for {song}:')
@@ -239,44 +251,37 @@ def main(args):
         if not title:
             title = song
 
-        dest_dir = os.path.join(args.output, game, ntfs_strip(title))
+        dest_dir = output_path / game / ntfs_strip(title)
 
         # make dest dir and copy
-        os.makedirs(dest_dir, exist_ok=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
         left.collection[song].copy_song(dest_dir)
-        log('log', f'Transferred song file contents to {dest_dir}')
+        log.info(f'Transferred song file contents to {dest_dir}')
 
-    log('info', 'Merging songs from right collection!')
-    queue = []
-    for song in right_unmatched:
-        if song:
-            queue.append(song)
-        if len(queue) == 50 or not song:
-            if len(queue) == 0:
-                continue
-            result = get_batch_romanizations(queue)
-            for (original_song, romanization) in result.items():
-                debug(args.verbose, f'Attempting to add song {original_song} with romanization {romanization}')
-                # check if no romanization was found
-                if not romanization:
-                    romanization = input(f'Romanizaton for {original_song} was not found, please specify one: ')
+    # repeat same process as merging songs present in both collections
+    #log.info('Merging songs from right collection!')
+    #for batch in batched(right_unmatched, 50):
+    #    result = get_batch_romanizations(batch)
+    #    for (original_song, romanization) in result.items():
+    #        log.debug(f'Attempting to add song {original_song} with romanization {romanization}')
+    #        # check if no romanization was found
+    #        if not romanization:
+    #            romanization = input(f'Romanizaton for {original_song} was not found, please specify one: ')
 
-                # formulate new folder(s) in destination dir and copy files over
-                # get base game directory from right
-                cur_song = right.collection[original_song]
-                game_dir = os.path.dirname(cur_song.dirname)
+    #        # formulate new folder(s) in destination dir and copy files over
+    #        # get base game directory from right
+    #        cur_song = right.collection[original_song]
+    #        game_dir = cur_song.dirname.parent
 
-                # substitute right dir with destination dir and append romanization
-                dest_game_dir = game_dir.replace(args.right, args.output)
-                dest_dir = os.path.join(dest_game_dir, ntfs_strip(romanization))
+    #        # substitute right dir with destination dir and append romanization
+    #        dest_dir = output_path / game_dir.relative_to(right_path) / ntfs_strip(romanization)
 
-                # finally, create dest dir and copy
-                os.makedirs(dest_dir, exist_ok=True)
-                right.collection[original_song].copy_song(dest_dir)
-                log('log', f'Transferred song file contents to {dest_dir}')
-            queue = []
+    #        # finally, create dest dir and copy
+    #        dest_dir.mkdir(parents=True, exist_ok=True)
+    #        right.collection[original_song].copy_song(dest_dir)
+    #        log.info(f'Transferred song file contents to {dest_dir}')
 
-    log('info', 'Merger Complete!')
+    log.info('Merger Complete!')
 
 parser = ArgumentParser()
 parser.add_argument('-v', '--verbose', help='Verbose output', default=False, action='store_true')

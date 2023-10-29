@@ -22,7 +22,7 @@ You will also need one or two collections of KSM/USC charts to merge. Currently,
 
 ## Usage
 ```console
-$ python merger.py -l LEFT -r RIGHT -o OUTPUT
+$ python merger.py -l LEFT -r RIGHT -o OUTPUT [-v]
 ```
 
 ### Options

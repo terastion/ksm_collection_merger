@@ -204,7 +204,7 @@ def main(args):
     # and create corresponding folders in new output
     #left_right_songs = [song for song in left_songs if song in right_songs]
     for batch in batched(right_songs, 50):
-        result = get_batch_romanizations(batch)
+        result = get_batch_romanizations(list(batch))
         for (original_song, romanization) in result.items():
             log.debug(f'Current song is {original_song} with romanization {romanization}')
             # check if no romanization was found
@@ -257,29 +257,6 @@ def main(args):
         dest_dir.mkdir(parents=True, exist_ok=True)
         left.collection[song].copy_song(dest_dir)
         log.info(f'Transferred song file contents to {dest_dir}')
-
-    # repeat same process as merging songs present in both collections
-    #log.info('Merging songs from right collection!')
-    #for batch in batched(right_unmatched, 50):
-    #    result = get_batch_romanizations(batch)
-    #    for (original_song, romanization) in result.items():
-    #        log.debug(f'Attempting to add song {original_song} with romanization {romanization}')
-    #        # check if no romanization was found
-    #        if not romanization:
-    #            romanization = input(f'Romanizaton for {original_song} was not found, please specify one: ')
-
-    #        # formulate new folder(s) in destination dir and copy files over
-    #        # get base game directory from right
-    #        cur_song = right.collection[original_song]
-    #        game_dir = cur_song.dirname.parent
-
-    #        # substitute right dir with destination dir and append romanization
-    #        dest_dir = output_path / game_dir.relative_to(right_path) / ntfs_strip(romanization)
-
-    #        # finally, create dest dir and copy
-    #        dest_dir.mkdir(parents=True, exist_ok=True)
-    #        right.collection[original_song].copy_song(dest_dir)
-    #        log.info(f'Transferred song file contents to {dest_dir}')
 
     log.info('Merger Complete!')
 

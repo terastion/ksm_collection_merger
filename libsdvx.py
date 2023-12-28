@@ -4,6 +4,7 @@ from pathlib import Path
 from shutil import copy
 from typing import Self
 
+# class for a single .ksh chart file's metadata
 class SDVXChart:
     fields = {
         'title': 'title',
@@ -19,14 +20,13 @@ class SDVXChart:
     }
 
     def __init__(self, chart_file: Path = None, json_dict: dict = None, include_sfx: bool = True) -> Self:
-        # ensure chart file or json_dict exists
         assert(chart_file and chart_file.exists() or json_dict)
         if json_dict:
             self.filename = Path(json_dict['filename'])
         else:
             self.filename = Path(chart_file.name)
 
-        # this gets set to True if chart is at different directory than rest of song
+        # this gets set to True if chart files are at different directory than rest of song
         # which does not happen on init
         self.custom_path = False
 
@@ -38,22 +38,20 @@ class SDVXChart:
         self.jacket = None
         self.sounds = None
 
-        # have all class fields as ref
+        # have all class fields as references
         ksm_fields = list(self.fields.keys())
         class_fields = list(self.fields.values())
 
-        # if json_dict provided, set obj fields to corresponding json_dict fields
+        # if json_dict provided, set object fields to corresponding json_dict fields
         if json_dict:
-            for field in class_fields:
-                if field in json_dict:
-                    setattr(self, field, json_dict[field])
+            [setattr(self, field, json_dict[field]) for field in class_fields if field in json_dict]
 
-        # otherwise, read ksh file and record desired fields in obj
+        # otherwise, read ksh file and record desired fields in object
         else:
             with chart_file.open('r', encoding='utf-8-sig', errors='ignore') as chart:
                 cur_line = chart.readline().strip()
                 while cur_line != "" and cur_line != "--":
-                    # skip non-field lines
+                    # skip non-metadata lines
                     if '=' not in cur_line:
                         cur_line = chart.readline().strip()
                         continue
@@ -61,8 +59,11 @@ class SDVXChart:
                     # read each field and set object field accordingly
                     (field, value) = cur_line.split('=', 1)
                     if field in ksm_fields:
+                        # read level field as a number
                         if field == 'level':
                             self.level = int(value)
+                        # some charts have more than 1 music file associated w it, separated by ';'
+                        # the 1st one is the clean version of a song, 2nd one is with SFX
                         elif field == 'm':
                             if ';' in value:
                                 self.music = value.split(';')
@@ -71,6 +72,7 @@ class SDVXChart:
                         else:
                             setattr(self, self.fields[field], value)
 
+                    # read next line for loop
                     cur_line = chart.readline().strip()
 
                 # check chart file for any extra effect audios
@@ -78,24 +80,30 @@ class SDVXChart:
                     self.sounds = set()
                 while cur_line != '':
                     if '.ogg' in cur_line:
-                        # extract any .ogg file mentioned in chart file
+                        # extract any .ogg filename mentioned in chart file
+                        # and add to sounds set
                         splits = cur_line.split('=')
                         for s in splits:
                             if '.ogg' in s:
                                 self.sounds.add(s.split(';')[0])
                                 break
                     cur_line = chart.readline().strip()
+
+                # convert sounds set into a list for serialization purposes
                 self.sounds = list(self.sounds)
 
     # convert object to serializable dict
     def to_json(self) -> dict:
         result = self.__dict__.copy()
         result['filename'] = str(self.filename)
+
+        # do not include title or artist, as these are included 
+        # in an SDVXChart's parent SDVXSong
         del result['title']
         del result['artist']
         return result
 
-    # get files of chart
+    # get all files of chart
     def get_files(self) -> list[str]:
         result = []
         result.append(str(self.filename))
@@ -107,6 +115,7 @@ class SDVXChart:
             result += self.sounds
         return result
 
+# class representing a song folder, which contains chart files for different difficulties
 class SDVXSong:
     # list indexes for each difficulty name
     difficulties = {
@@ -117,17 +126,18 @@ class SDVXSong:
     }
 
     def __init__(self, song_dir: Path = None, json_dict: dict = None, include_sfx: bool = True) -> Self:
-        # ensure chart file or json_dict exists
         assert(song_dir and song_dir.exists() or json_dict)
         self.dirname = song_dir or Path(json_dict['dirname'])
         self.title = None
 
-        # init chart difficulties to None
+        # the four list items represent NOV, ADV, EXH, and MXM/INF/GRV/VVD/XCD difficulties
         self.charts = [None, None, None, None]
 
         # populate class fields with json_dict data if available
         if json_dict:
             self.charts = [SDVXChart(json_dict=chart, include_sfx=include_sfx) if chart else None for chart in json_dict['charts']]
+            # update each SDVXChart with title/artist metadata
+            # since json data for a chart does not contain it
             for chart in self.charts:
                 if chart:
                     chart.title = json_dict['title']
@@ -143,6 +153,7 @@ class SDVXSong:
                 chart = SDVXChart(chart_file=chart_file, include_sfx=include_sfx)
 
                 # set chart title, or checks if it matches existing name
+                # if it does match an existing name, add to list of conflicting titles
                 if self.title:
                     if self.title != chart.title:
                         conflicts.add(chart.title)
@@ -150,6 +161,7 @@ class SDVXSong:
                 else: self.title = chart.title
                 self.artist = chart.artist
 
+                # add SDVXChart to list of SDVXSong's charts
                 self.charts[self.difficulties[chart.difficulty]] = chart
 
             # if there are naming conflicts, prompt user for the correct name
@@ -173,7 +185,7 @@ class SDVXSong:
         for chart in self.charts:
             # only update chart data if title doesn't match new one
             if chart and chart.title != new_title:
-                # update title
+                # update title in SDVXChart object
                 chart.title = new_title
 
                 # assemble full chart path using either song dir + filename
@@ -236,6 +248,7 @@ class SDVXSong:
                     if not dest_file_path.exists():
                         copy(full_file_path, dest_file_path)
 
+# master class representing a collection of song folders
 class SDVXCollection:
     def __init__(self, collection_dir: Path = None, include_sfx=True):
         # make sure collection dir exists
@@ -244,6 +257,7 @@ class SDVXCollection:
 
         # if data file exists in collection dir,
         # initialize object from json
+        # otherwise, initialize collection from folder
         json_file = collection_dir / 'data.json'
         if json_file.exists():
             with json_file.open('r') as file:
@@ -253,7 +267,6 @@ class SDVXCollection:
                     title = song['title']
                     sdvxsong = SDVXSong(json_dict=song)
                     self.collection[title] = sdvxsong
-        # otherwise, initialize collection from folder
         else:
             self.collection = {}
 
@@ -269,6 +282,7 @@ class SDVXCollection:
         for songdir in collection_dir.iterdir():
             if songdir.is_dir():
                 # if folder contains ksh charts, init SDVXSong obj
+                # otherwise, recursive call init_folder on subfolder
                 if SDVXCollection.is_song_directory(songdir):
                     log.debug(f'Initiating SDVXSong at {songdir}')
                     song = SDVXSong(song_dir=songdir, include_sfx=include_sfx)
@@ -285,12 +299,11 @@ class SDVXCollection:
                             log.info(f'Successfully merged under {canon.dirname}!')
                         else:
                             log.info('Failed to merge songs')
-                # otherwise, recursive call init_folder on subfolder
                 else:
                     log.warn(f'Directory {songdir} is not a song directory!')
                     self.init_folder(songdir, include_sfx)
 
-    # merge song folders that contain INF/GRV/VVD/XCD with their regular counterparts
+    # merge song folders that contain INF/GRV/VVD/XCD difficulties with their regular counterparts
     # returns the main song path to be used
     # only to be used when initializing SDVXCollection and in merger script
     def merge_songs_internal(self, song1: SDVXSong, song2: SDVXSong) -> SDVXSong | None:
@@ -323,12 +336,7 @@ class SDVXCollection:
 
     # search for a string in song list
     def search_song(self, query: str) -> list[str]:
-        results = []
-        for song in self.collection.keys():
-            if query in song:
-                results.append(song)
-
-        return results
+        return [song for song in self.collection.keys() if query in song]
 
     # convert object to serializable dict
     def to_json(self) -> dict:
@@ -339,6 +347,7 @@ class SDVXCollection:
 
         return result
 
+    # export collection json to a data file
     def export_collection(self):
         json_file = self.path / 'data.json'
         with json_file.open('w') as file:

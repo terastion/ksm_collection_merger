@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from itertools import batched, chain
 from pathlib import Path
 
+# remywiki's api limit is 50 titles per query
 REMY_API = 'https://remywiki.com/api.php'
 BATCH_SIZE = 50
 
@@ -24,6 +25,7 @@ def ntfs_strip(string):
             if ch in result:
                 result = result.replace(ch, sub)
 
+    # make sure result does not end in a space or period
     while result[-1:] == ' ' or result[-1:] == '.':
         result = result[:-1]
 
@@ -53,6 +55,7 @@ def resolve_redirects(data):
 # get romanizations for a batch of BATCH_SIZE song titles asynchronously
 async def get_batch_romanizations(session: aiohttp.ClientSession, songtitles: list[str]) -> (str, str | None):
     # manually override problematic titles
+    # containing illegal characters for mediawiki queries
     for i, title in enumerate(songtitles):
         match title:
             case 'XXanadu#climaXX':
@@ -68,7 +71,7 @@ async def get_batch_romanizations(session: aiohttp.ClientSession, songtitles: li
             case '[ ]DENTITY':
                 songtitles[i] = 'IDENTITY'
 
-    # make query by joining song titles together
+    # join song titles together for query parameters
     query_string = '|'.join(songtitles)
     params = {
         'action': 'query',
@@ -106,7 +109,7 @@ async def get_batch_romanizations(session: aiohttp.ClientSession, songtitles: li
             redirects = resolve_redirects(data['query']['redirects'])
 
             # now, iterate through dict of redirects and check for normalization
-            # before yielding each member
+            # before adding each member to result list
             for (original, redirect) in redirects.items():
                 if original in normalized:
                     result.append((normalized[original], redirect))
@@ -136,7 +139,7 @@ async def get_batch_romanizations(session: aiohttp.ClientSession, songtitles: li
                     result.append((normalized[song['title']], normalized[song['title']]))
                     del normalized[song['title']]
                     returned.append(song['title'])
-                # otherwise, title is identical, and return tuple w/identical title
+                # otherwise, title's romanization is identical, and return tuple w/identical title
                 # but do not return duplicates
                 elif song['title'] not in returned:
                     result.append((song['title'], song['title']))
@@ -155,6 +158,7 @@ games = {
 
 # get romanization and game of origin for a song title asynchronously
 async def get_song_game(session: aiohttp.ClientSession, song: str):
+    # query wiki for song's page HTML
     romanization = song
     game = None
     params = {
@@ -275,7 +279,7 @@ async def main(args):
                 # from remywiki and must ask for it
                 if not romanization:
                     romanization = input(f'Could not get title romanization from RemyWiki. Please specify the romanization for {song}: ')
-            # if game found but not romanization, then song=romanization
+            # if game was found but not romanization, then song=romanization
             if not romanization:
                 romanization = song
 

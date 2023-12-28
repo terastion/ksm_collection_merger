@@ -1,264 +1,345 @@
-import os
+import json
 import logging as log
 from pathlib import Path
 from shutil import copy
+from typing import Self
 
 class SDVXChart:
-    difficulties = {\
-        'light': 'NOV',\
-        'challenge': 'ADV',\
-        'extended': 'EXH',\
-        'infinite': 'MXM',\
+    fields = {
+        'title': 'title',
+        'artist': 'artist',
+        'effect': 'effector',
+        'illustrator': 'illustrator',
+        'difficulty': 'difficulty',
+        'level': 'level',
+        'm': 'music',
+        'jacket': 'jacket',
+        'sounds': 'sounds',
+        'custom_path': 'custom_path',
     }
-    def __init__(self, chart_file, include_sfx=True):
-        # make sure chart file exists
-        assert(chart_file.exists())
-        self.filename = Path(chart_file.name)
-        
-        # this gets set to True elsewhere if chart is at different directory than rest of song
+
+    def __init__(self, chart_file: Path = None, json_dict: dict = None, include_sfx: bool = True) -> Self:
+        # ensure chart file or json_dict exists
+        assert(chart_file and chart_file.exists() or json_dict)
+        if json_dict:
+            self.filename = Path(json_dict['filename'])
+        else:
+            self.filename = Path(chart_file.name)
+
+        # this gets set to True if chart is at different directory than rest of song
+        # which does not happen on init
         self.custom_path = False
 
-        # Init empty fields in case they're not found in file
-        self.title = None
-        self.difficulty = None
+        # init empty fields in case they're not found in file
+        self.effector = None
+        self.illustrator = None
         self.level = None
         self.music = []
         self.jacket = None
         self.sounds = None
 
-        # read start of ksh file and record desired fields in obj
-        with chart_file.open('r', encoding='utf-8-sig', errors='ignore') as chart:
-            cur_line = chart.readline().strip()
-            while cur_line != "" and cur_line != '--':
-                if '=' not in cur_line:
-                    cur_line = chart.readline().strip()
-                    continue
+        # have all class fields as ref
+        ksm_fields = list(self.fields.keys())
+        class_fields = list(self.fields.values())
 
-                (field, value) = cur_line.split('=', 1)
-                if field == 'title':
-                    self.title = value
-                elif field == 'difficulty':
-                    self.difficulty = self.difficulties[value]
-                elif field == 'level':
-                    self.level = int(value)
-                elif field == 'm':
-                    if ';' in value:
-                        self.music = value.split(';')
-                    else:
-                        self.music = [value]
-                elif field == 'jacket':
-                    self.jacket = value
+        # if json_dict provided, set obj fields to corresponding json_dict fields
+        if json_dict:
+            for field in class_fields:
+                if field in json_dict:
+                    setattr(self, field, json_dict[field])
 
+        # otherwise, read ksh file and record desired fields in obj
+        else:
+            with chart_file.open('r', encoding='utf-8-sig', errors='ignore') as chart:
                 cur_line = chart.readline().strip()
+                while cur_line != "" and cur_line != "--":
+                    # skip non-field lines
+                    if '=' not in cur_line:
+                        cur_line = chart.readline().strip()
+                        continue
 
-            # see if any files contain extra effect audios and note them in a set
-            if include_sfx:
-                self.sounds = set()
+                    # read each field and set object field accordingly
+                    (field, value) = cur_line.split('=', 1)
+                    if field in ksm_fields:
+                        if field == 'level':
+                            self.level = int(value)
+                        elif field == 'm':
+                            if ';' in value:
+                                self.music = value.split(';')
+                            else:
+                                self.music = [value]
+                        else:
+                            setattr(self, self.fields[field], value)
+
+                    cur_line = chart.readline().strip()
+
+                # check chart file for any extra effect audios
+                if include_sfx:
+                    self.sounds = set()
                 while cur_line != '':
                     if '.ogg' in cur_line:
-                        # extract any .ogg file mentioned in the chart file
+                        # extract any .ogg file mentioned in chart file
                         splits = cur_line.split('=')
                         for s in splits:
                             if '.ogg' in s:
                                 self.sounds.add(s.split(';')[0])
                                 break
                     cur_line = chart.readline().strip()
+                self.sounds = list(self.sounds)
 
-            
+    # convert object to serializable dict
+    def to_json(self) -> dict:
+        result = self.__dict__.copy()
+        result['filename'] = str(self.filename)
+        del result['title']
+        del result['artist']
+        return result
+
+    # get files of chart
+    def get_files(self) -> list[str]:
+        result = []
+        result.append(str(self.filename))
+        if self.jacket:
+            result.append(self.jacket)
+        if self.music:
+            result += self.music
+        if self.sounds:
+            result += self.sounds
+        return result
 
 class SDVXSong:
-    def __init__(self, chart_dir, include_sfx=True):
-        # make sure chart dir exists
-        assert(chart_dir.exists())
-        self.dirname = chart_dir
+    # list indexes for each difficulty name
+    difficulties = {
+        'light': 0,
+        'challenge': 1,
+        'extended': 2,
+        'infinite': 3
+    }
+
+    def __init__(self, song_dir: Path = None, json_dict: dict = None, include_sfx: bool = True) -> Self:
+        # ensure chart file or json_dict exists
+        assert(song_dir and song_dir.exists() or json_dict)
+        self.dirname = song_dir or Path(json_dict['dirname'])
         self.title = None
 
         # init chart difficulties to None
-        self.charts = {}
+        self.charts = [None, None, None, None]
 
-        # get all .ksh files in directory and init SDVXChart objs with them
-        chart_files = [chart for chart in chart_dir.iterdir() if chart.name[-4:] == '.ksh']
-        conflicts = set()
-        for chart_file in chart_files:
-            log.debug(f'Current chart file is {chart_file}')
-            chart = SDVXChart(chart_file, include_sfx)
-            
-            # set chart title, or check if it matches existing name
-            if self.title:
-                if self.title != chart.title:
-                    conflicts.add(chart.title)
-                    conflicts.add(self.title)
-            else: self.title = chart.title
-
-            # assign chart to appropriate obj field
-            self.charts[chart.difficulty] = chart
-
-        if conflicts:
-            conflict_list = list(conflicts)
-            while True:
-                try:
-                    log.warn(f'Title conflict detected at song directory {chart_dir}: \n{\
-                        '\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])
-                    }')
-                    number = int(input('Please type a number to specify correct title: '))
-                    for chart in self.charts.values():
-                        self.update_chart_title(chart, conflict_list[number])
-                    break
-                except:
-                    log.warn('Invalid entry!')
-
-    # Update chart's title
-    def update_chart_title(self, chart, new_title):
-        chart.title = new_title
-
-        # assemble full chart path using either song dir + filename
-        # or the complete filename in case of charts w/custom paths
-        full_path = None
-        if chart.custom_path:
-            full_path = chart.filename
+        # populate class fields with json_dict data if available
+        if json_dict:
+            self.charts = [SDVXChart(json_dict=chart, include_sfx=include_sfx) if chart else None for chart in json_dict['charts']]
+            for chart in self.charts:
+                if chart:
+                    chart.title = json_dict['title']
+                    chart.artist = json_dict['artist']
+            self.title = json_dict['title']
+            self.artist = json_dict['artist']
+        # otherwise, scan song_dir for ksm files
         else:
-            full_path = self.dirname / chart.filename
+            chart_files = song_dir.glob('*.ksh')
+            conflicts = set()
+            for chart_file in chart_files:
+                log.debug(f'Current chart file is {chart_file}')
+                chart = SDVXChart(chart_file=chart_file, include_sfx=include_sfx)
 
-        with full_path.open('r+', encoding='utf-8-sig', errors='ignore') as file:
-            # read all lines and find line containing title=, then update title
-            lines = file.readlines()
-            for i, line in enumerate(lines):
-                if line[:6] == 'title=':
-                    lines[i] = f'title={new_title}\n'
-                    break
+                # set chart title, or checks if it matches existing name
+                if self.title:
+                    if self.title != chart.title:
+                        conflicts.add(chart.title)
+                        conflicts.add(self.title)
+                else: self.title = chart.title
+                self.artist = chart.artist
 
-            file.seek(0)
-            file.writelines(lines)
+                self.charts[self.difficulties[chart.difficulty]] = chart
 
-    # Get all files used by all difficulties of song
-    def get_files(self):
-        result = set()
-        for chart in self.charts.values():
-            result.add(str(chart.filename))
-            if chart.jacket:
-                result.add(chart.jacket)
-            if chart.music:
-                result.update(chart.music)
-            if chart.sounds:
-                result.update(chart.sounds)
+            # if there are naming conflicts, prompt user for the correct name
+            # and propagate it to all chart files
+            if conflicts:
+                conflict_list = list(conflicts)
+                while True:
+                    try:
+                        log.warn(f'Title conflict detected at song directory {song_dir}: \n{\
+                            '\n'.join([f'[{num}] {title}' for (num, title) in enumerate(conflict_list)])\
+                        }')
+                        number = int(input('Please type a number to specify correct title: '))
+                        self.update_title(chart, conflict_list[number])
+                        break
+                    except:
+                        log.warn('Invalid entry!')
 
+    # update song title for all chart files
+    def update_title(self, new_title: str):
+        self.title = new_title
+        for chart in self.charts:
+            # only update chart data if title doesn't match new one
+            if chart and chart.title != new_title:
+                # update title
+                chart.title = new_title
+
+                # assemble full chart path using either song dir + filename
+                # or the complete filename in case of charts w/custom paths
+                full_path = None
+                if chart.custom_path:
+                    full_path = chart.filename
+                else:
+                    full_path = self.dirname / chart.filename
+
+                # read all lines and find line containing title=, then update title
+                with full_path.open('r+', encoding='utf-8-sig', errors='ignore') as file:
+                    lines = file.readlines()
+                    for i, line in enumerate(lines):
+                        if line[:6] == 'title=':
+                            lines[i] = f'title={new_title}\n'
+                            break
+
+                    file.seek(0)
+                    file.writelines(lines)
+
+    # convert object to serializable dict
+    def to_json(self) -> dict:
+        result = self.__dict__.copy()
+        result['dirname'] = str(self.dirname)
+        result['charts'] = [chart.to_json() if chart else None for chart in self.charts]
         return result
 
-    # Get all files associated with a particular difficulty of song
-    def get_difficulty_files(self, diff):
+    # get all files used by all difficulties of song
+    def get_files(self) -> list[str]:
         result = set()
-        assert(diff in self.charts)
-        chart = self.charts[diff]
-        result.add(str(chart.filename))
-        if chart.jacket:
-            result.add(chart.jacket)
-        if chart.music:
-            result.update(chart.music)
-        if chart.sounds:
-            result.update(chart.sounds)
+        for chart in self.charts:
+            if chart:
+                result.update(chart.get_files())
 
-        return result
+        return list(result)
 
-    # Copy files over to a new folder
-    def copy_song(self, dest_dir):
-        for diff in self.charts.keys():
-            # Check if difficulty is hosted at a different directory
-            #log.debug(f'Current difficulty is {diff}')
-            chart_directory = self.dirname
-            if self.charts[diff].custom_path:
-                chart_directory = self.charts[diff].filename.parent
+    # get all files of a specific difficulty
+    def get_difficulty_files(self, diff) -> list[str]:
+        chart = self.charts[self.difficulties[diff]]
+        return chart.get_files() if chart else []
 
-            # copy files over
-            for file in self.get_difficulty_files(diff):
-                file_name = Path(file).name
-                full_file_path = chart_directory / file_name
-                dest_file_path = dest_dir / file_name
-                if not dest_file_path.exists():
-                    copy(full_file_path, dest_dir)
+    # copy song files over to a new directory
+    def copy_song(self, dest_dir: Path):
+        for chart in self.charts:
+            if chart:
+                # check if difficulty is hosted at different directory
+                chart_directory = self.dirname
+                if chart.custom_path:
+                    chart_directory = chart.filename.parent
 
+                # copy files over
+                for file in self.get_difficulty_files(chart.difficulty):
+                    file_name = Path(file).name
+                    full_file_path = chart_directory / file_name
+                    
+                    # check if file does not already exist in dest_dir
+                    # otherwise copy it over
+                    dest_file_path = dest_dir / file_name
+                    if not dest_file_path.exists():
+                        copy(full_file_path, dest_file_path)
 
 class SDVXCollection:
-    def __init__(self, collection_dir, include_sfx=True):
+    def __init__(self, collection_dir: Path = None, include_sfx=True):
         # make sure collection dir exists
-        collection_dir_path = Path(collection_dir)
-        assert(collection_dir_path.exists())
+        assert(collection_dir and collection_dir.exists())
+        self.path = collection_dir.resolve()
 
-        # init song dict and other fields
-        self.collection = {}
-        self.path = collection_dir_path.resolve()
+        # if data file exists in collection dir,
+        # initialize object from json
+        json_file = collection_dir / 'data.json'
+        if json_file.exists():
+            with json_file.open('r') as file:
+                json_dict = json.load(file)
+                self.collection = {}
+                for song in json_dict['collection']:
+                    title = song['title']
+                    sdvxsong = SDVXSong(json_dict=song)
+                    self.collection[title] = sdvxsong
+        # otherwise, initialize collection from folder
+        else:
+            self.collection = {}
 
-        # iterate through all directories in collection dir and init
-        self.init_folder(collection_dir_path, include_sfx)
+            # iterate through all directories in collection dir and init
+            self.init_folder(collection_dir, include_sfx)
 
-    # Check for the presence of .ksh files in directory
-    def is_song_directory(self, song_dir):
-        return [file for file in song_dir.iterdir() if file.name[-4:] == '.ksh'] != []
+    # check for the presence of .ksh files in directory
+    def is_song_directory(song_dir: Path) -> bool:
+        return bool(next(song_dir.glob('*.ksh'), False))
     
-    # Initialize a collection folder, iterating through its contents and creating
-    # SDVXSongs out of each song folder contained inside
-    # Recursive function to handle subfolders
-    def init_folder(self, collection_dir, include_sfx):
-        # iterate through folder contents
+    def init_folder(self, collection_dir: Path, include_sfx: bool):
+        # iterate through dir contents
         for songdir in collection_dir.iterdir():
             if songdir.is_dir():
                 # if folder contains ksh charts, init SDVXSong obj
-                if self.is_song_directory(songdir):
+                if SDVXCollection.is_song_directory(songdir):
                     log.debug(f'Initiating SDVXSong at {songdir}')
-                    song = SDVXSong(songdir, include_sfx)
+                    song = SDVXSong(song_dir=songdir, include_sfx=include_sfx)
 
                     # if song title does not exist in collection, add it
                     # otherwise, attempt to merge SDVXSongs into one
                     if song.title not in self.collection:
-                        log.debug(f'Adding {song.title} located at {songdir} to collection!')
+                        log.debug(f'Adding {song.title} located at {songdir} to collection')
                         self.collection[song.title] = song
                     else:
                         log.warn(f'Song {song.title} at {songdir} already exists at {self.collection[song.title].dirname}.')
-                        canon = self.merge_songs(self.collection[song.title], song)
+                        canon = self.merge_songs_internal(self.collection[song.title], song)
                         if canon:
-                            #pass
                             log.info(f'Successfully merged under {canon.dirname}!')
                         else:
-                            #pass
-                            log.warn('Failed to merge!')
+                            log.info('Failed to merge songs')
                 # otherwise, recursive call init_folder on subfolder
                 else:
+                    log.warn(f'Directory {songdir} is not a song directory!')
                     self.init_folder(songdir, include_sfx)
 
-    # Merge song folders that contain INF/GRV/VVD/XCD with their regular counterparts
-    # Returns the main song path to be used
-    def merge_songs(self, song1, song2):
+    # merge song folders that contain INF/GRV/VVD/XCD with their regular counterparts
+    # returns the main song path to be used
+    # only to be used when initializing SDVXCollection and in merger script
+    def merge_songs_internal(self, song1: SDVXSong, song2: SDVXSong) -> SDVXSong | None:
         main_song = None
         mxm_song = None
 
-        # Determine which song is canonical by checking if either lack/contain a MXM
-        if 'MXM' in song1.charts and not 'MXM' in song2.charts:
+        # determine which song is main by checking which one contains a MXM
+        # and which one lacks it
+        if song1.charts[3] and not song2.charts[3]:
             main_song = song2
             mxm_song = song1
             self.collection[song1.title] = song2
-        elif not 'MXM' in song1.charts and 'MXM' in song2.charts:
+        elif not song1.charts[3] and song2.charts[3]:
             main_song = song1
             mxm_song = song2
         else:
-            log.warn(f'Neither difficulty of {song1.title} contains a MXM!')
-            return
+            #log.warn(f'Neither difficulty of {song1.title} contains a MXM!')
+            return None
 
-        # Generate full (relative path) of mxm_song and edit mxm chart to use it
-        # Then set main_song's MXM to mxm_song's MXM
-        if not mxm_song.charts['MXM'].custom_path:
-            #mxm_path = os.path.join(mxm_song.dirname, os.path.basename(mxm_song.charts['MXM'].filename))
-            mxm_path = mxm_song.dirname / mxm_song.charts['MXM'].filename.name
-            mxm_song.charts['MXM'].filename = mxm_path
-            mxm_song.charts['MXM'].custom_path = True
-        main_song.charts['MXM'] = mxm_song.charts['MXM']
+        # generate full (relative path) of mxm_song and edit mxm chart to use it
+        # then set main_song's MXM to mxm_song's MXM
+        if not mxm_song.charts[3].custom_path:
+            mxm_path = mxm_song.dirname / mxm_song.charts[3].filename.name
+            mxm_song.charts[3].filename = mxm_path
+            mxm_song.charts[3].custom_path = True
+        main_song.charts[3] = mxm_song.charts[3]
 
-        del mxm_song
+        #del mxm_song
         return main_song
-    
-    # Search for a string in song list
-    def search_song(self, query):
+
+    # search for a string in song list
+    def search_song(self, query: str) -> list[str]:
         results = []
         for song in self.collection.keys():
             if query in song:
                 results.append(song)
 
         return results
+
+    # convert object to serializable dict
+    def to_json(self) -> dict:
+        result = {}
+        result['collection'] = []
+        for song in self.collection.values():
+            result['collection'].append(song.to_json())
+
+        return result
+
+    def export_collection(self):
+        json_file = self.path / 'data.json'
+        with json_file.open('w') as file:
+            json.dump(self.to_json(), file, ensure_ascii=False)

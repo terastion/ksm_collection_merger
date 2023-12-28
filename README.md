@@ -5,7 +5,7 @@ A program made to organize one collection or merge two collections of [SOUND VOL
 ### Dependencies
 * [Python 3.12+](https://python.org)
 * [AIOHTTP](https://docs.aiohttp.org/en/stable/)
-* [Beautiful Soup 4](https://pypi.org/project/beautifulsoup4/)
+* [Beautiful Soup 4](https://www.crummy.com/software/BeautifulSoup/)
 
 You can install the Python dependencies with `pip`:
 ```
